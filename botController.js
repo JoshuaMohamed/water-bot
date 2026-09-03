@@ -22,9 +22,19 @@ function getSenderInfo(msg) {
 
 async function getImageData(client, msg) {
   const rawBody = msg._data?.body || msg._data?.preview;
+  console.log("[water-bot] getImageData: checking payload", {
+    msgId: msg.id?._serialized || msg.id,
+    hasMedia: msg.hasMedia,
+    hasRawBody: Boolean(rawBody),
+    rawBodyLength: typeof rawBody === "string" ? rawBody.length : 0,
+    mimetype: msg._data?.mimetype || "image/jpeg",
+    from: msg.from,
+  });
+
   if (rawBody && typeof rawBody === "string") {
     const base64Data = rawBody.includes(",") ? rawBody.split(",")[1] : rawBody;
     if (base64Data && base64Data.length > 100) {
+      console.log("[water-bot] getImageData: using raw media body payload");
       return {
         buffer: Buffer.from(base64Data, "base64"),
         mimetype: msg._data?.mimetype || "image/jpeg",
@@ -54,13 +64,18 @@ async function getImageData(client, msg) {
     }, serializedId);
 
     if (base64) {
+      console.log("[water-bot] getImageData: extracted media from DOM", {
+        base64Length: base64.length,
+      });
       return {
         buffer: Buffer.from(base64, "base64"),
         mimetype: "image/jpeg",
       };
     }
+
+    console.log("[water-bot] getImageData: no image data found in DOM");
   } catch (error) {
-    console.error("DOM image extraction failed:", error.message);
+    console.error("[water-bot] DOM image extraction failed:", error.message);
   }
 
   return null;
@@ -128,14 +143,27 @@ async function isWaterGroupChat(client, msg) {
 
 async function handleMessage(client, msg) {
   const body = msg.body || "";
+  const normalizedBody = body.toLowerCase();
   const groupInfo = await isWaterGroupChat(client, msg);
   const chatId = groupInfo.groupChatId || msg.to || msg.chatId || msg.from;
 
+  console.log("[water-bot] message received", {
+    from: msg.from,
+    chatId,
+    hasMedia: Boolean(msg.hasMedia),
+    bodyPreview: body.slice(0, 120),
+    isGroup: groupInfo.isGroup,
+    chatName: groupInfo.chatName,
+    matchesWaterGroup: groupInfo.matches,
+  });
+
   if (!groupInfo.matches) {
+    console.log("[water-bot] ignoring message: not in #water group");
     return;
   }
 
-  if (body.toLowerCase().includes("#water") && msg.hasMedia) {
+  if (normalizedBody.includes("#water") && msg.hasMedia) {
+    console.log("[water-bot] #water media trigger detected");
     const { userId, userName } = getSenderInfo(msg);
 
     const cooldown = store.canLog(
@@ -143,6 +171,12 @@ async function handleMessage(client, msg) {
       userId,
       parseInt(process.env.COOLDOWN_MINUTES || "10"),
     );
+    console.log("[water-bot] cooldown check", {
+      userId,
+      allowed: cooldown.allowed,
+      remainingMinutes: cooldown.remainingMinutes,
+    });
+
     if (!cooldown.allowed) {
       await msg.reply(
         formatCooldownMessage(userName, cooldown.remainingMinutes),
@@ -152,6 +186,12 @@ async function handleMessage(client, msg) {
 
     try {
       const imageData = await getImageData(client, msg);
+      console.log("[water-bot] imageData result", {
+        hasImageData: Boolean(imageData),
+        mimetype: imageData?.mimetype,
+        size: imageData?.buffer?.length || 0,
+      });
+
       if (!imageData) {
         await msg.reply(
           "❌ Could not read image payload. Please re-send the photo!",
@@ -167,6 +207,8 @@ async function handleMessage(client, msg) {
         user.logsToday.length,
       );
 
+      console.log("[water-bot] model evaluation", evaluation);
+
       if (evaluation.isValid) {
         const updatedUser = store.recordLog(chatId, userId, userName);
         await msg.reply(
@@ -180,7 +222,7 @@ async function handleMessage(client, msg) {
         await msg.reply(formatLogRejectedMessage(evaluation.reason));
       }
     } catch (error) {
-      console.error("Error processing image:", error);
+      console.error("[water-bot] Error processing image:", error);
       await msg.reply("❌ Failed to process photo. Please try again!");
     }
   }
