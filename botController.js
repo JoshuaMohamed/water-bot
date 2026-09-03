@@ -87,9 +87,26 @@ function getGroupChatId(msg) {
 }
 
 async function isWaterGroupChat(client, msg) {
-  const groupChatId = getGroupChatId(msg);
+  let groupChatId = getGroupChatId(msg);
+  let chatName = "";
+  let isGroup = Boolean(groupChatId);
 
-  if (!groupChatId) {
+  try {
+    const chat = await msg.getChat();
+    groupChatId = chat?.id?._serialized || groupChatId;
+    chatName = (
+      chat?.name ||
+      chat?.formattedTitle ||
+      chat?.subject ||
+      chat?.groupMetadata?.subject ||
+      ""
+    ).trim();
+    isGroup = Boolean(chat?.isGroup || groupChatId?.endsWith("@g.us"));
+  } catch {
+    // Fallback below uses the browser-side collections when msg.getChat() is unavailable.
+  }
+
+  if (!isGroup && !groupChatId) {
     return { matches: false, groupChatId: null, chatName: "", isGroup: false };
   }
 
@@ -125,17 +142,16 @@ async function isWaterGroupChat(client, msg) {
       .catch(() => null);
   }
 
-  const chatName = (
-    browserChat?.name ||
-    browserChat?.formattedTitle ||
-    browserChat?.subject ||
-    ""
-  ).trim();
+  if (!chatName) {
+    chatName = (
+      browserChat?.name ||
+      browserChat?.formattedTitle ||
+      browserChat?.subject ||
+      ""
+    ).trim();
+  }
   const normalizedChatName = chatName.toLowerCase();
-  const isGroup = Boolean(
-    browserChat?.isGroup ||
-    (typeof groupChatId === "string" && groupChatId.endsWith("@g.us")),
-  );
+  isGroup = Boolean(browserChat?.isGroup || isGroup);
   const matches = Boolean(isGroup && normalizedChatName.includes("#water"));
 
   return { matches, groupChatId, chatName, isGroup };
@@ -272,7 +288,7 @@ function registerBot(client) {
     });
   });
 
-  client.on("message_create", (msg) => handleMessage(client, msg));
+  client.on("message", (msg) => handleMessage(client, msg));
 }
 
 module.exports = { registerBot };

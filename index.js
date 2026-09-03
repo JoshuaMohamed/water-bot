@@ -60,6 +60,26 @@ function createClient() {
     qrcode.generate(qr, { small: true });
   });
 
+  client.on("authenticated", () => {
+    console.log("[water-bot] WhatsApp authenticated");
+  });
+
+  client.on("auth_failure", (message) => {
+    console.error("[water-bot] WhatsApp auth failure:", message);
+  });
+
+  client.on("change_state", (state) => {
+    console.log("[water-bot] WhatsApp state changed:", state);
+  });
+
+  client.on("disconnected", (reason) => {
+    console.log("[water-bot] WhatsApp disconnected:", reason);
+  });
+
+  client.on("loading_screen", (percent, message) => {
+    console.log("[water-bot] WhatsApp loading:", { percent, message });
+  });
+
   registerBot(client);
   return client;
 }
