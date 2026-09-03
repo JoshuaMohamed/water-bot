@@ -169,6 +169,10 @@ async function isWaterGroupChat(client, msg) {
 }
 
 async function handleMessage(client, msg) {
+  if (msg.fromMe) {
+    return;
+  }
+
   const body = getMessageText(msg);
   if (!isRelevantMessage(msg)) {
     return;
@@ -303,7 +307,7 @@ function registerBot(client) {
     });
   });
 
-  client.on("message", (msg) => handleMessage(client, msg));
+  client.on("message_create", (msg) => handleMessage(client, msg));
 }
 
 module.exports = { registerBot };
