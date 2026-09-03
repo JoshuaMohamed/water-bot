@@ -44,6 +44,25 @@ function getMessageTrace(msg) {
 }
 
 async function getImageData(client, msg) {
+  if (typeof msg.downloadMedia === "function") {
+    try {
+      const downloaded = await msg.downloadMedia();
+      if (downloaded?.data) {
+        console.log("[water-bot] getImageData: using downloadMedia payload", {
+          mimetype: downloaded.mimetype || "image/jpeg",
+          dataLength: downloaded.data.length,
+        });
+
+        return {
+          buffer: Buffer.from(downloaded.data, "base64"),
+          mimetype: downloaded.mimetype || "image/jpeg",
+        };
+      }
+    } catch (error) {
+      console.error("[water-bot] downloadMedia failed:", error.message);
+    }
+  }
+
   const rawBody = msg._data?.body || msg._data?.preview;
   console.log("[water-bot] getImageData: checking payload", {
     msgId: msg.id?._serialized || msg.id,
@@ -104,19 +123,14 @@ async function getImageData(client, msg) {
   return null;
 }
 
-function getGroupChatId(msg) {
-  const chatId = msg.to || msg.chatId || msg._data?.to || msg._data?.chatId;
-  return typeof chatId === "string" && chatId.endsWith("@g.us") ? chatId : null;
-}
-
-async function isWaterGroupChat(client, msg) {
-  let groupChatId = getGroupChatId(msg);
+async function getChatContext(msg) {
+  let chatId = msg.from || msg.chatId || msg.to || msg._data?.chatId || null;
   let chatName = "";
-  let isGroup = Boolean(groupChatId);
+  let isGroup = false;
 
   try {
     const chat = await msg.getChat();
-    groupChatId = chat?.id?._serialized || groupChatId;
+    chatId = chat?.id?._serialized || chatId;
     chatName = (
       chat?.name ||
       chat?.formattedTitle ||
@@ -124,60 +138,12 @@ async function isWaterGroupChat(client, msg) {
       chat?.groupMetadata?.subject ||
       ""
     ).trim();
-    isGroup = Boolean(chat?.isGroup || groupChatId?.endsWith("@g.us"));
+    isGroup = Boolean(chat?.isGroup);
   } catch {
-    // Fallback below uses the browser-side collections when msg.getChat() is unavailable.
+    // If getChat() is unavailable, fall back to the raw message IDs above.
   }
 
-  if (!isGroup && !groupChatId) {
-    return { matches: false, groupChatId: null, chatName: "", isGroup: false };
-  }
-
-  let browserChat = null;
-  if (client?.pupPage) {
-    browserChat = await client.pupPage
-      .evaluate(async (targetId) => {
-        try {
-          const WAW = window.require("WAWebCollections");
-          const ChatCollection = WAW.Chat;
-          const wid = window.require("WAWebWidFactory").createWid(targetId);
-          const chatObj = ChatCollection.get(wid);
-
-          if (!chatObj) {
-            return null;
-          }
-
-          return {
-            id: chatObj.id?._serialized || targetId,
-            name:
-              chatObj.formattedTitle ||
-              chatObj.name ||
-              chatObj.groupMetadata?.subject ||
-              "",
-            formattedTitle: chatObj.formattedTitle || chatObj.name || "",
-            isGroup: Boolean(chatObj.isGroup || chatObj.groupMetadata),
-            subject: chatObj.groupMetadata?.subject || "",
-          };
-        } catch (error) {
-          return null;
-        }
-      }, groupChatId)
-      .catch(() => null);
-  }
-
-  if (!chatName) {
-    chatName = (
-      browserChat?.name ||
-      browserChat?.formattedTitle ||
-      browserChat?.subject ||
-      ""
-    ).trim();
-  }
-  const normalizedChatName = chatName.toLowerCase();
-  isGroup = Boolean(browserChat?.isGroup || isGroup);
-  const matches = Boolean(isGroup && normalizedChatName.includes("#water"));
-
-  return { matches, groupChatId, chatName, isGroup };
+  return { chatId, chatName, isGroup };
 }
 
 async function handleMessage(client, msg) {
@@ -186,30 +152,27 @@ async function handleMessage(client, msg) {
   }
 
   const body = getMessageText(msg);
-  if (!isRelevantMessage(msg)) {
-    return;
-  }
-
   const normalizedBody = body.toLowerCase();
-  const groupInfo = await isWaterGroupChat(client, msg);
-  const chatId = groupInfo.groupChatId || msg.to || msg.chatId || msg.from;
+  const chatInfo = await getChatContext(msg);
+  const chatId = chatInfo.chatId || msg.to || msg.chatId || msg.from;
 
   console.log("[water-bot] message received", {
     from: msg.from,
     chatId,
     hasMedia: Boolean(msg.hasMedia),
     bodyPreview: body.slice(0, 120),
-    isGroup: groupInfo.isGroup,
-    chatName: groupInfo.chatName,
-    matchesWaterGroup: groupInfo.matches,
+    isGroup: chatInfo.isGroup,
+    chatName: chatInfo.chatName,
   });
 
-  if (!groupInfo.matches) {
-    console.log("[water-bot] ignoring message: not in #water group");
+  if (!isRelevantMessage(msg)) {
+    console.log(
+      "[water-bot] ignoring message: no #water trigger or admin command",
+    );
     return;
   }
 
-  if (normalizedBody.includes("#water") && msg.hasMedia) {
+  if (normalizedBody.includes("#water")) {
     console.log("[water-bot] #water media trigger detected");
     const { userId, userName } = getSenderInfo(msg);
 
