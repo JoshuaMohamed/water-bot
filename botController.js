@@ -31,6 +31,18 @@ function isRelevantMessage(msg) {
   );
 }
 
+function getMessageTrace(msg) {
+  const body = getMessageText(msg);
+  return {
+    id: msg.id?._serialized || msg.id || null,
+    from: msg.from || null,
+    author: msg.author || null,
+    hasMedia: Boolean(msg.hasMedia),
+    bodyPreview: body.slice(0, 120),
+    fromMe: Boolean(msg.fromMe),
+  };
+}
+
 async function getImageData(client, msg) {
   const rawBody = msg._data?.body || msg._data?.preview;
   console.log("[water-bot] getImageData: checking payload", {
@@ -288,6 +300,27 @@ async function handleMessage(client, msg) {
   }
 }
 
+function attachMessageListeners(client) {
+  const seenMessages = new Set();
+
+  const traceAndHandle = async (eventName, msg) => {
+    const trace = getMessageTrace(msg);
+    if (!seenMessages.has(trace.id)) {
+      seenMessages.add(trace.id);
+      console.log(`[water-bot] ${eventName}`, trace);
+    }
+
+    try {
+      await handleMessage(client, msg);
+    } catch (error) {
+      console.error(`[water-bot] ${eventName} handler error:`, error);
+    }
+  };
+
+  client.on("message_create", (msg) => traceAndHandle("message_create", msg));
+  client.on("message", (msg) => traceAndHandle("message", msg));
+}
+
 function registerBot(client) {
   client.on("ready", () => {
     console.log("✅ Water Referee Bot is online and listening!");
@@ -307,7 +340,7 @@ function registerBot(client) {
     });
   });
 
-  client.on("message_create", (msg) => handleMessage(client, msg));
+  attachMessageListeners(client);
 }
 
 module.exports = { registerBot };
