@@ -147,7 +147,7 @@ async function getChatContext(msg) {
 }
 
 async function handleMessage(client, msg) {
-  if (msg.fromMe) {
+  if (msg.fromMe && !msg.author) {
     return;
   }
 
