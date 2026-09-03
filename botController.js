@@ -20,6 +20,17 @@ function getSenderInfo(msg) {
   return { userId, userName };
 }
 
+function getMessageText(msg) {
+  return (msg.body || msg._data?.body || msg._data?.caption || "").trim();
+}
+
+function isRelevantMessage(msg) {
+  const text = getMessageText(msg).toLowerCase();
+  return (
+    text.includes("#water") || text === "!override" || text === "!standings"
+  );
+}
+
 async function getImageData(client, msg) {
   const rawBody = msg._data?.body || msg._data?.preview;
   console.log("[water-bot] getImageData: checking payload", {
@@ -158,7 +169,11 @@ async function isWaterGroupChat(client, msg) {
 }
 
 async function handleMessage(client, msg) {
-  const body = msg.body || "";
+  const body = getMessageText(msg);
+  if (!isRelevantMessage(msg)) {
+    return;
+  }
+
   const normalizedBody = body.toLowerCase();
   const groupInfo = await isWaterGroupChat(client, msg);
   const chatId = groupInfo.groupChatId || msg.to || msg.chatId || msg.from;
