@@ -21,16 +21,21 @@ function cleanupStaleAuth(targetDir) {
     return;
   }
 
-  const hasStaleSession = staleFiles.some((file) =>
+  const staleSessionFiles = staleFiles.filter((file) =>
     fs.existsSync(path.join(sessionDir, file)),
   );
 
-  if (!hasStaleSession) {
+  if (staleSessionFiles.length === 0) {
     return;
   }
 
-  console.log("Removing stale WhatsApp auth session before startup...");
-  fs.rmSync(targetDir, { recursive: true, force: true });
+  console.log(
+    "Removing stale WhatsApp lock files before startup (keeping auth session intact)...",
+  );
+
+  for (const file of staleSessionFiles) {
+    fs.rmSync(path.join(sessionDir, file), { force: true });
+  }
 }
 
 function createClient() {
@@ -40,7 +45,14 @@ function createClient() {
     authStrategy: new LocalAuth({ dataPath: authPath }),
     puppeteer: {
       headless: true,
-      args: ["--no-sandbox", "--disable-setuid-sandbox"],
+      args: [
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        "--disable-gpu",
+        "--single-process",
+        "--no-zygote",
+      ],
     },
   });
 
