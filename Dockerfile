@@ -43,10 +43,13 @@ RUN npm ci --omit=dev
 COPY . .
 
 # Persist SQLite + WhatsApp session outside the image layers.
+# NOTE: Railway does not support the Docker VOLUME instruction, so do NOT
+# add VOLUME here. Instead attach a Railway Volume mounted at /data in the
+# service settings (Variables / Volumes tab) to persist DB + session.
 # (No HEALTHCHECK: this is a WhatsApp worker with no HTTP port;
 # liveness = process running, so use a restart policy instead.)
 ENV DB_PATH=/data/water.db
 ENV WWEBJS_AUTH_PATH=/data/.wwebjs_auth
-VOLUME ["/data"]
+RUN mkdir -p /data
 
 CMD ["npm", "run", "start"]
