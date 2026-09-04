@@ -35,18 +35,54 @@ function isRelevantMessage(msg) {
   );
 }
 
-async function downloadFromMessage(mediaMsg) {
+// WhatsApp Web's mid-2026 frontend renamed the internal serialized-id
+// getter `id._serialized` → `id.$1`. whatsapp-web.js still reads
+// `message.id._serialized`, so `downloadMedia()` (and quoted replies) pass
+// `undefined` as the message id into `page.evaluate` and the page throws
+// the opaque minified `r: r`. Backfill it at the boundary — harmless no-op
+// once upstream fixes the library.
+function normalizeMessageId(msg) {
+  const id = msg?.id;
+  if (id && id._serialized == null && id.$1 != null) {
+    try {
+      id._serialized = id.$1;
+    } catch {
+      try {
+        msg.id = { ...id, _serialized: id.$1 };
+      } catch {
+        // read-only shape we can't patch — leave as is.
+      }
+    }
+    logger.debug("backfilled message id._serialized from $1");
+    return true;
+  }
+  return false;
+}
+
+async function downloadFromMessage(mediaMsg, label = "direct") {
   if (!mediaMsg || typeof mediaMsg.downloadMedia !== "function") return null;
-  // Railway's low-memory Chromium + WhatsApp Web's media decryption
-  // occasionally fail on the first try (puppeteer evaluate throws a
-  // minified single-char error) — retry with backoff before giving up.
-  // Media may also still be downloading server-side right after receipt.
+  normalizeMessageId(mediaMsg);
+  // `downloadMedia()` runs `resolveMediaBlob` inside the page, which throws
+  // a minified single-char error when the blob isn't in the WA Web cache
+  // yet (or is gone). The message object from the event can be stale, so
+  // reload it before retrying — this is the standard workaround for the
+  // "media not yet synced" race.
   const MAX_ATTEMPTS = 3;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+    if (attempt > 1 && typeof mediaMsg.reload === "function") {
+      try {
+        await mediaMsg.reload();
+      } catch (error) {
+        logger.warn(
+          `downloadMedia ${label} reload before attempt ${attempt} failed:`,
+          error?.stack || error?.message || error,
+        );
+      }
+    }
     try {
       const downloaded = await mediaMsg.downloadMedia();
       if (!downloaded?.data) {
-        logger.warn(`downloadMedia attempt ${attempt}: empty payload`);
+        logger.warn(`downloadMedia ${label} attempt ${attempt}: empty payload`);
       } else {
         const buffer = Buffer.from(downloaded.data, "base64");
         if (buffer.length > 0) {
@@ -55,11 +91,11 @@ async function downloadFromMessage(mediaMsg) {
             mimetype: downloaded.mimetype || "image/jpeg",
           };
         }
-        logger.warn(`downloadMedia attempt ${attempt}: decoded to 0 bytes`);
+        logger.warn(`downloadMedia ${label} attempt ${attempt}: decoded to 0 bytes`);
       }
     } catch (error) {
       logger.warn(
-        `downloadMedia attempt ${attempt} failed:`,
+        `downloadMedia ${label} attempt ${attempt} failed:`,
         error?.stack || error?.message || error,
       );
     }
@@ -68,11 +104,21 @@ async function downloadFromMessage(mediaMsg) {
         setTimeout(resolve, attempt === 1 ? 1500 : 3000),
       );
   }
+  // Booleans only — never log paths/keys.
+  // idKeys tells us whether WA Web is still serving the renamed `$1`
+  // shape (key names only, no values).
   logger.warn(
-    "downloadMedia gave up:",
+    `downloadMedia ${label} gave up:`,
     JSON.stringify({
       hasMedia: mediaMsg.hasMedia,
       type: mediaMsg.type,
+      fromMe: mediaMsg.fromMe,
+      idKeys: Object.keys(mediaMsg.id || {}),
+      hasDirectPath: Boolean(mediaMsg._data?.directPath),
+      isViewOnce: Boolean(
+        mediaMsg._data?.isViewOnce || mediaMsg._data?.viewMode === 2,
+      ),
+      isEphemeral: Boolean(mediaMsg._data?.isEphemeral),
       hasDownloadMedia: typeof mediaMsg.downloadMedia === "function",
     }),
   );
@@ -83,7 +129,7 @@ async function getImageData(msg) {
   // Case 1: photo sent WITH "#water" in the caption — media is on this msg.
   // (msg.hasMedia may be undefined on old mocks — treat undefined as "try".)
   if (msg.hasMedia !== false) {
-    const direct = await downloadFromMessage(msg);
+    const direct = await downloadFromMessage(msg, "direct");
     if (direct) return direct;
     // If the message explicitly has media but decryption failed, don't
     // silently fall through — there is nothing else to try except a quote.
@@ -98,8 +144,9 @@ async function getImageData(msg) {
     try {
       if (typeof msg.getQuotedMessage === "function") {
         const quoted = await msg.getQuotedMessage();
+        normalizeMessageId(quoted);
         if (quoted?.hasMedia) {
-          const fromQuote = await downloadFromMessage(quoted);
+          const fromQuote = await downloadFromMessage(quoted, "quoted");
           if (fromQuote) return fromQuote;
         } else {
           logger.warn("quoted message has no media");
@@ -287,13 +334,16 @@ async function botReply(msg, content) {
     typeof content === "string"
       ? content.replace(/#water/gi, "water")
       : content;
+  normalizeMessageId(msg);
   const sent = await msg.reply(safeContent);
+  normalizeMessageId(sent);
   markMessageSeen(getMessageId(sent));
   return sent;
 }
 
 function attachMessageListeners(client) {
   const dedupAndHandle = async (msg) => {
+    normalizeMessageId(msg);
     if (isDuplicateMessage(getMessageId(msg))) return;
     try {
       await handleMessage(client, msg);
