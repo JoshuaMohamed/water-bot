@@ -34,6 +34,11 @@ ENV TZ=UTC
 
 # Install Chromium (system package) and dependencies
 RUN apt-get update && (apt-get install -y chromium --no-install-recommends || apt-get install -y chromium-browser --no-install-recommends) && rm -rf /var/lib/apt/lists/*
+# Normalize to /usr/bin/chromium (index.js also falls back to -browser/chrome paths).
+# Fails the build early if no browser binary is present.
+RUN (command -v chromium >/dev/null && ln -sf "$(command -v chromium)" /usr/bin/chromium || true) && \
+    (command -v chromium-browser >/dev/null && [ ! -e /usr/bin/chromium ] && ln -s "$(command -v chromium-browser)" /usr/bin/chromium || true) && \
+    (ls -l /usr/bin/chromium* && (/usr/bin/chromium --version || chromium --version || chromium-browser --version))
 
 # Install dependencies first (use lockfile if present)
 COPY package.json package-lock.json* ./
