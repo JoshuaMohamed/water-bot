@@ -48,27 +48,14 @@ async function getImageData(msg) {
   }
 }
 
-async function getChatContext(msg) {
-  let chatId = msg.from || msg.chatId || msg.to || msg._data?.chatId || null;
-  let chatName = "";
-  let isGroup = false;
-
+async function getChatId(msg) {
   try {
     const chat = await msg.getChat();
-    chatId = chat?.id?._serialized || chatId;
-    chatName = (
-      chat?.name ||
-      chat?.formattedTitle ||
-      chat?.subject ||
-      chat?.groupMetadata?.subject ||
-      ""
-    ).trim();
-    isGroup = Boolean(chat?.isGroup);
+    if (chat?.id?._serialized) return chat.id._serialized;
   } catch {
-    // If getChat() is unavailable, fall back to the raw message IDs above.
+    // If getChat() is unavailable, fall back to the raw message IDs below.
   }
-
-  return { chatId, chatName, isGroup };
+  return msg.from || msg.chatId || msg.to || msg._data?.chatId || null;
 }
 
 async function handleMessage(client, msg) {
@@ -78,8 +65,7 @@ async function handleMessage(client, msg) {
 
   const body = getMessageText(msg);
   const normalizedBody = body.toLowerCase();
-  const chatInfo = await getChatContext(msg);
-  const chatId = chatInfo.chatId || msg.to || msg.chatId || msg.from;
+  const chatId = (await getChatId(msg)) || msg.to || msg.chatId || msg.from;
 
   if (!isRelevantMessage(msg)) {
     return;
@@ -218,9 +204,18 @@ function registerBot(client) {
 
     cron.schedule(config.nightlyCron, async () => {
       const db = store.loadData();
-      for (const group of Object.values(db.groups)) {
-        const summaryMsg = formatNightlySummary(group.users);
-        console.log(summaryMsg);
+      for (const [chatId, group] of Object.entries(db.groups)) {
+        try {
+          await client.sendMessage(
+            chatId,
+            formatNightlySummary(group.users),
+          );
+        } catch (error) {
+          console.error(
+            "[water-bot] nightly summary send failed:",
+            error.message || error,
+          );
+        }
       }
     });
 
@@ -232,4 +227,4 @@ function registerBot(client) {
   attachMessageListeners(client);
 }
 
-module.exports = { registerBot };
+module.exports = { registerBot, handleMessage, isRelevantMessage };
