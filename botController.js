@@ -35,18 +35,71 @@ function isRelevantMessage(msg) {
   );
 }
 
-async function getImageData(msg) {
-  if (typeof msg.downloadMedia !== "function") return null;
-  try {
-    const downloaded = await msg.downloadMedia();
-    if (!downloaded?.data) return null;
-    return {
-      buffer: Buffer.from(downloaded.data, "base64"),
-      mimetype: downloaded.mimetype || "image/jpeg",
-    };
-  } catch {
-    return null;
+async function downloadFromMessage(mediaMsg) {
+  if (!mediaMsg || typeof mediaMsg.downloadMedia !== "function") return null;
+  // Railway's low-memory Chromium occasionally fails media decryption on
+  // the first try — retry once before giving up.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const downloaded = await mediaMsg.downloadMedia();
+      if (!downloaded?.data) {
+        logger.warn(`downloadMedia attempt ${attempt}: empty payload`);
+      } else {
+        const buffer = Buffer.from(downloaded.data, "base64");
+        if (buffer.length > 0) {
+          return {
+            buffer,
+            mimetype: downloaded.mimetype || "image/jpeg",
+          };
+        }
+        logger.warn(`downloadMedia attempt ${attempt}: decoded to 0 bytes`);
+      }
+    } catch (error) {
+      logger.warn(
+        `downloadMedia attempt ${attempt} failed:`,
+        error.message || error,
+      );
+    }
+    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000));
   }
+  return null;
+}
+
+async function getImageData(msg) {
+  // Case 1: photo sent WITH "#water" in the caption — media is on this msg.
+  // (msg.hasMedia may be undefined on old mocks — treat undefined as "try".)
+  if (msg.hasMedia !== false) {
+    const direct = await downloadFromMessage(msg);
+    if (direct) return direct;
+    // If the message explicitly has media but decryption failed, don't
+    // silently fall through — there is nothing else to try except a quote.
+    if (msg.hasMedia === true && !msg.hasQuotedMsg && !msg._data?.quotedMsg) {
+      return null;
+    }
+  }
+
+  // Case 2: photo sent first, "#water" sent as a separate message that
+  // replies to / quotes the photo — media lives on the quoted message.
+  if (msg.hasQuotedMsg || msg._data?.quotedMsg) {
+    try {
+      if (typeof msg.getQuotedMessage === "function") {
+        const quoted = await msg.getQuotedMessage();
+        if (quoted?.hasMedia) {
+          const fromQuote = await downloadFromMessage(quoted);
+          if (fromQuote) return fromQuote;
+        } else {
+          logger.warn("quoted message has no media");
+        }
+      }
+    } catch (error) {
+      logger.warn(
+        "getQuotedMessage failed:",
+        error.message || error,
+      );
+    }
+  }
+
+  return null;
 }
 
 async function getChatId(msg) {
@@ -93,7 +146,7 @@ async function handleMessage(client, msg) {
 
       if (!imageData) {
         await msg.reply(
-          "❌ Could not read image payload. Please re-send the photo!",
+          "❌ Couldn't grab that photo. Send the photo WITH #water in the caption, or reply to the photo with #water!",
         );
         return;
       }
@@ -228,4 +281,4 @@ function registerBot(client) {
   attachMessageListeners(client);
 }
 
-module.exports = { registerBot, handleMessage, isRelevantMessage };
+module.exports = { registerBot, handleMessage, isRelevantMessage, getImageData };
