@@ -4,6 +4,7 @@ const path = require("path");
 const { Client, LocalAuth } = require("whatsapp-web.js");
 const qrcode = require("qrcode-terminal");
 const { registerBot } = require("./botController");
+const logger = require("./logger");
 
 const authPath =
   process.env.WWEBJS_AUTH_PATH || path.join(__dirname, ".wwebjs_auth");
@@ -57,15 +58,15 @@ function createClient() {
   });
 
   client.on("authenticated", () => {
-    console.log("[water-bot] WhatsApp authenticated");
+    logger.info("WhatsApp authenticated");
   });
 
   client.on("auth_failure", (message) => {
-    console.error("[water-bot] WhatsApp auth failure:", message);
+    logger.error("WhatsApp auth failure:", message);
   });
 
   client.on("disconnected", (reason) => {
-    console.log("[water-bot] WhatsApp disconnected:", reason);
+    logger.info("WhatsApp disconnected:", reason);
   });
 
   registerBot(client);

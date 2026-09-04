@@ -1,6 +1,7 @@
 const cron = require("node-cron");
 const store = require("./store");
 const { config, isAdmin } = require("./config");
+const logger = require("./logger");
 const {
   formatAdminOverrideMessage,
   formatCooldownMessage,
@@ -118,7 +119,7 @@ async function handleMessage(client, msg) {
         await msg.reply(formatLogRejectedMessage(evaluation.reason));
       }
     } catch (error) {
-      console.error("[water-bot] Error processing image:", error);
+      logger.error("Error processing image:", error);
       await msg.reply("❌ Failed to process photo. Please try again!");
     }
   }
@@ -190,7 +191,7 @@ function attachMessageListeners(client) {
     try {
       await handleMessage(client, msg);
     } catch (error) {
-      console.error("[water-bot] message handler error:", error);
+      logger.error("message handler error:", error);
     }
   };
 
@@ -200,7 +201,7 @@ function attachMessageListeners(client) {
 
 function registerBot(client) {
   client.on("ready", () => {
-    console.log("✅ Water Referee Bot is online and listening!");
+    logger.info("Water Referee Bot is online and listening!");
 
     cron.schedule(config.nightlyCron, async () => {
       const db = store.loadData();
@@ -211,8 +212,8 @@ function registerBot(client) {
             formatNightlySummary(group.users),
           );
         } catch (error) {
-          console.error(
-            "[water-bot] nightly summary send failed:",
+          logger.error(
+            "nightly summary send failed:",
             error.message || error,
           );
         }

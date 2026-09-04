@@ -1,5 +1,6 @@
 const { GoogleGenerativeAI } = require("@google/generative-ai");
 const { buildVisionPrompt } = require("./content");
+const logger = require("./logger");
 
 const MODEL_NAME = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
 
@@ -65,7 +66,7 @@ async function inspectWaterPhoto(
       )
     );
   } catch (error) {
-    console.error("Gemini Vision API Error:", error.message || error);
+    logger.error("Gemini Vision API Error:", error.message || error);
     // Fail closed: never auto-grant points when verification is unavailable.
     return rejectedResult(
       `Couldn't verify that photo right now, ${userName} — please try again in a bit.`,
