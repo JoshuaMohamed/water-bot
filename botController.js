@@ -116,9 +116,9 @@ async function getChatContext(msg) {
 }
 
 async function handleMessage(client, msg) {
-  if (msg.fromMe && !msg.author) {
-    return;
-  }
+  // Same-account bot: the owner sends commands from the logged-in account
+  // itself (fromMe). Never block those — bot replies carry no command
+  // triggers, so the relevance filter below already prevents self-loops.
 
   const body = getMessageText(msg);
   const normalizedBody = body.toLowerCase();
@@ -207,8 +207,36 @@ async function handleMessage(client, msg) {
   }
 }
 
+function getMessageId(msg) {
+  return msg.id?._serialized || msg.id || null;
+}
+
+// Bounded dedup: `message` and `message_create` can both fire for the same
+// message. Evict oldest entries + expire after TTL so the cache can't leak.
+const SEEN_TTL_MS = 5 * 60 * 1000;
+const SEEN_MAX_IDS = 500;
+const seenMessageIds = new Map();
+
+function isDuplicateMessage(id) {
+  if (!id) return false;
+  const now = Date.now();
+  const seenAt = seenMessageIds.get(id);
+  if (seenAt && now - seenAt < SEEN_TTL_MS) return true;
+  seenMessageIds.set(id, now);
+  if (seenMessageIds.size > SEEN_MAX_IDS) {
+    const oldest = seenMessageIds.keys().next().value;
+    seenMessageIds.delete(oldest);
+  }
+  for (const [key, ts] of seenMessageIds) {
+    if (now - ts >= SEEN_TTL_MS) seenMessageIds.delete(key);
+    else break;
+  }
+  return false;
+}
+
 function attachMessageListeners(client) {
-  const handleWithErrorLog = async (msg) => {
+  const dedupAndHandle = async (msg) => {
+    if (isDuplicateMessage(getMessageId(msg))) return;
     try {
       await handleMessage(client, msg);
     } catch (error) {
@@ -216,8 +244,8 @@ function attachMessageListeners(client) {
     }
   };
 
-  client.on("message_create", handleWithErrorLog);
-  client.on("message", handleWithErrorLog);
+  client.on("message_create", dedupAndHandle);
+  client.on("message", dedupAndHandle);
 }
 
 function registerBot(client) {
