@@ -1,4 +1,5 @@
-FROM node:20-slim
+# node:sqlite (used by store.js) needs Node 22+; 24 is current LTS.
+FROM node:24-slim
 
 ENV NODE_ENV=production
 
@@ -40,5 +41,12 @@ RUN npm ci --omit=dev
 
 # Copy source
 COPY . .
+
+# Persist SQLite + WhatsApp session outside the image layers.
+# (No HEALTHCHECK: this is a WhatsApp worker with no HTTP port;
+# liveness = process running, so use a restart policy instead.)
+ENV DB_PATH=/data/water.db
+ENV WWEBJS_AUTH_PATH=/data/.wwebjs_auth
+VOLUME ["/data"]
 
 CMD ["npm", "run", "start"]

@@ -5,3 +5,13 @@ node_modules
 wwebjs_auth
 
 .env
+
+# Runtime state: chat history contains phone-number-derived IDs (PII).
+data.json
+data.json.migrated
+
+# SQLite database and journals.
+*.db
+*.db-journal
+*.db-wal
+*.db-shm

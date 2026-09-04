@@ -1,4 +1,13 @@
-node_modules.wwebjs_auth;
-dist.env;
-npm - debug.log;
-Dockerfile.dockerignore;
+node_modules
+.git
+.env
+data.json
+data.json.migrated
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+.wwebjs_auth
+.wwebjs_cache
+Dockerfile
+.dockerignore
