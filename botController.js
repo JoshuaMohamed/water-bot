@@ -37,9 +37,12 @@ function isRelevantMessage(msg) {
 
 async function downloadFromMessage(mediaMsg) {
   if (!mediaMsg || typeof mediaMsg.downloadMedia !== "function") return null;
-  // Railway's low-memory Chromium occasionally fails media decryption on
-  // the first try — retry once before giving up.
-  for (let attempt = 1; attempt <= 2; attempt++) {
+  // Railway's low-memory Chromium + WhatsApp Web's media decryption
+  // occasionally fail on the first try (puppeteer evaluate throws a
+  // minified single-char error) — retry with backoff before giving up.
+  // Media may also still be downloading server-side right after receipt.
+  const MAX_ATTEMPTS = 3;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       const downloaded = await mediaMsg.downloadMedia();
       if (!downloaded?.data) {
@@ -60,8 +63,19 @@ async function downloadFromMessage(mediaMsg) {
         error?.stack || error?.message || error,
       );
     }
-    if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000));
+    if (attempt < MAX_ATTEMPTS)
+      await new Promise((resolve) =>
+        setTimeout(resolve, attempt === 1 ? 1500 : 3000),
+      );
   }
+  logger.warn(
+    "downloadMedia gave up:",
+    JSON.stringify({
+      hasMedia: mediaMsg.hasMedia,
+      type: mediaMsg.type,
+      hasDownloadMedia: typeof mediaMsg.downloadMedia === "function",
+    }),
+  );
   return null;
 }
 
@@ -225,7 +239,7 @@ async function handleMessage(client, msg) {
 }
 
 function getMessageId(msg) {
-  return msg.id?._serialized || msg.id || null;
+  return msg?.id?._serialized || msg?.id || null;
 }
 
 // Bounded dedup: `message` and `message_create` can both fire for the same
