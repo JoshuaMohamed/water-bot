@@ -31,65 +31,18 @@ function isRelevantMessage(msg) {
   );
 }
 
-async function getImageData(client, msg) {
-  if (typeof msg.downloadMedia === "function") {
-    try {
-      const downloaded = await msg.downloadMedia();
-      if (downloaded?.data) {
-        return {
-          buffer: Buffer.from(downloaded.data, "base64"),
-          mimetype: downloaded.mimetype || "image/jpeg",
-        };
-      }
-    } catch {
-      // Fall through to alternate extraction methods.
-    }
-  }
-
-  const rawBody = msg._data?.body || msg._data?.preview;
-
-  if (rawBody && typeof rawBody === "string") {
-    const base64Data = rawBody.includes(",") ? rawBody.split(",")[1] : rawBody;
-    if (base64Data && base64Data.length > 100) {
-      return {
-        buffer: Buffer.from(base64Data, "base64"),
-        mimetype: msg._data?.mimetype || "image/jpeg",
-      };
-    }
-  }
-
+async function getImageData(msg) {
+  if (typeof msg.downloadMedia !== "function") return null;
   try {
-    const serializedId = msg.id?._serialized || msg.id;
-    const base64 = await client.pupPage.evaluate(async (targetId) => {
-      const imgEl = document.querySelector(`[data-id="${targetId}"] img`);
-      if (imgEl && imgEl.src) {
-        if (imgEl.src.startsWith("data:")) {
-          return imgEl.src.split(",")[1];
-        }
-        if (imgEl.src.startsWith("blob:")) {
-          const response = await fetch(imgEl.src);
-          const blob = await response.blob();
-          return new Promise((resolve) => {
-            const reader = new FileReader();
-            reader.onloadend = () => resolve(reader.result.split(",")[1]);
-            reader.readAsDataURL(blob);
-          });
-        }
-      }
-      return null;
-    }, serializedId);
-
-    if (base64) {
-      return {
-        buffer: Buffer.from(base64, "base64"),
-        mimetype: "image/jpeg",
-      };
-    }
+    const downloaded = await msg.downloadMedia();
+    if (!downloaded?.data) return null;
+    return {
+      buffer: Buffer.from(downloaded.data, "base64"),
+      mimetype: downloaded.mimetype || "image/jpeg",
+    };
   } catch {
-    // DOM extraction unavailable; treat as no image data.
+    return null;
   }
-
-  return null;
 }
 
 async function getChatContext(msg) {
@@ -146,7 +99,7 @@ async function handleMessage(client, msg) {
     }
 
     try {
-      const imageData = await getImageData(client, msg);
+      const imageData = await getImageData(msg);
 
       if (!imageData) {
         await msg.reply(
