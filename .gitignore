@@ -4,7 +4,9 @@ node_modules
 .wwebjs_auth
 wwebjs_auth
 
-.env
+# Committed on purpose: holds non-secret defaults (model names, timeouts)
+# so Railway picks them up. NEVER put secrets here — set GEMINI_API_KEY
+# etc. in Railway Variables (they override .env at runtime).
 
 # Runtime state: chat history contains phone-number-derived IDs (PII).
 data.json
