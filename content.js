@@ -35,7 +35,7 @@ function formatLogSuccessMessage(reason, loggedCount) {
 }
 
 function formatLogRejectedMessage(reason) {
-  return `${reason}\n\n_If I misjudged, an admin can type \`!override\` to grant this point._`;
+  return `${reason}\n\n_If I misjudged, an admin can reply to the photo with \`!override\` to grant this point._`;
 }
 
 function formatAdminOverrideMessage(userName, loggedCount) {

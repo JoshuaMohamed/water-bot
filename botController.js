@@ -173,6 +173,30 @@ async function getChatId(msg) {
   return msg.from || msg.chatId || msg.to || msg._data?.chatId || null;
 }
 
+async function getOverrideQuotedTarget(msg) {
+  // Resolve the !override target from the quoted message when the admin
+  // replied to a photo. Returns { userId, userName } or null when there is
+  // no usable quote (standalone !override, quote fetch failed, or the quote
+  // is not a photo — e.g. a reply to the bot's own text notice — in which
+  // case the caller falls back to the lastRejected slot).
+  if (!msg.hasQuotedMsg && !msg._data?.quotedMsg) return null;
+  if (typeof msg.getQuotedMessage !== "function") return null;
+  try {
+    const quoted = await msg.getQuotedMessage();
+    normalizeMessageId(quoted);
+    if (!quoted || quoted.hasMedia === false) return null;
+    const { userId, userName } = getSenderInfo(quoted);
+    if (!userId) return null;
+    return { userId, userName };
+  } catch (error) {
+    logger.warn(
+      "override getQuotedMessage failed, falling back to lastRejected:",
+      error?.stack || error?.message || error,
+    );
+    return null;
+  }
+}
+
 async function handleMessage(client, msg) {
   // Same-account bot: the owner sends commands from the logged-in account
   // itself (fromMe), so we can't blanket-ignore fromMe messages.
@@ -254,6 +278,27 @@ async function handleMessage(client, msg) {
     const { senderNumber } = getSenderInfo(msg);
     if (!isAdmin({ senderNumber, fromMe: Boolean(msg.fromMe) })) {
       await botReply(msg, formatNotAdminMessage());
+      return;
+    }
+    // Preferred target: the author of the quoted/replied-to photo.
+    // Admins use override by replying to the rejected photo, so the photo
+    // owner must win — the per-chat lastRejected slot may hold someone
+    // else's (or the admin's own) more recent rejection.
+    const quotedTarget = await getOverrideQuotedTarget(msg);
+    if (quotedTarget) {
+      const user = store.recordLog(
+        chatId,
+        quotedTarget.userId,
+        quotedTarget.userName,
+      );
+      const displayName =
+        user.name && user.name !== "Hydrator"
+          ? user.name
+          : quotedTarget.userName;
+      await botReply(
+        msg,
+        formatAdminOverrideMessage(displayName, user.logsToday.length),
+      );
       return;
     }
     const lastRejected = store.getLastRejected(chatId);
