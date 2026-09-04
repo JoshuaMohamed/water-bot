@@ -3,8 +3,6 @@ const path = require("path");
 const { DatabaseSync } = require("node:sqlite");
 const { config } = require("./config");
 
-const LEGACY_JSON = path.join(__dirname, "data.json");
-
 let db = null;
 let dbPath = null;
 
@@ -44,7 +42,6 @@ function getDb() {
     const dir = path.dirname(dbPath);
     if (dir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
     db = openDb(dbPath);
-    migrateLegacyJsonIfNeeded();
   }
   return db;
 }
@@ -59,91 +56,6 @@ function _setDbPathForTests(targetPath) {
   const dir = path.dirname(targetPath);
   if (dir && !fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   db = openDb(targetPath);
-}
-
-function tableIsEmpty(table) {
-  return getDb().prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n === 0;
-}
-
-function normalizeImportedShield(user) {
-  if (typeof user.shield === "number") return user.shield;
-  if (typeof user.shields === "number") return user.shields;
-  return 1;
-}
-
-// One-time import from the old data.json layout (groups + legacy users).
-// Runs only when the DB is empty; the JSON is renamed to a backup.
-// Set WATER_SKIP_LEGACY_MIGRATION=1 to disable (tests).
-function migrateLegacyJsonIfNeeded() {
-  if (process.env.WATER_SKIP_LEGACY_MIGRATION === "1") return;
-  if (!fs.existsSync(LEGACY_JSON)) return;
-  if (!tableIsEmpty("users") || !tableIsEmpty("logs")) return;
-
-  let raw;
-  try {
-    raw = JSON.parse(fs.readFileSync(LEGACY_JSON, "utf-8"));
-  } catch {
-    return;
-  }
-
-  const groups =
-    raw.groups && typeof raw.groups === "object" ? raw.groups : {};
-  if (Object.keys(groups).length === 0 && raw.users) {
-    groups.legacy = { users: raw.users, lastRejectedLog: raw.lastRejectedLog };
-  }
-
-  const database = getDb();
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    const upsertUser = database.prepare(`
-      INSERT INTO users (chat_id, user_id, name, streak, shield, last_log_ts)
-      VALUES (?, ?, ?, ?, ?, ?)
-      ON CONFLICT(chat_id, user_id) DO NOTHING
-    `);
-    const insertLog = database.prepare(`
-      INSERT INTO logs (chat_id, user_id, ts) VALUES (?, ?, ?)
-    `);
-    const upsertRejected = database.prepare(`
-      INSERT INTO rejected (chat_id, user_id, user_name, ts)
-      VALUES (?, ?, ?, ?)
-      ON CONFLICT(chat_id) DO UPDATE SET user_id = excluded.user_id, user_name = excluded.user_name, ts = excluded.ts
-    `);
-
-    for (const [chatId, group] of Object.entries(groups)) {
-      for (const [userId, user] of Object.entries(group.users || {})) {
-        upsertUser.run(
-          chatId,
-          userId,
-          user.name || "Hydrator",
-          user.streak || 0,
-          normalizeImportedShield(user || {}),
-          user.lastLogTimestamp || 0,
-        );
-        for (const ts of Array.isArray(user.logsToday) ? user.logsToday : []) {
-          insertLog.run(chatId, userId, ts);
-        }
-      }
-      const rej = group.lastRejectedLog;
-      if (rej && rej.userId) {
-        upsertRejected.run(
-          chatId,
-          rej.userId,
-          rej.userName || "Hydrator",
-          rej.timestamp || Date.now(),
-        );
-      }
-    }
-    database.exec("COMMIT");
-  } catch {
-    database.exec("ROLLBACK");
-    return;
-  }
-
-  try {
-    fs.renameSync(LEGACY_JSON, `${LEGACY_JSON}.migrated`);
-  } catch {
-    // Keep the JSON in place; migration won't rerun once tables are filled.
-  }
 }
 
 function rowToUser(row, logsToday) {
@@ -194,8 +106,7 @@ function getUser(chatId, userId, userName) {
   return rowToUser(existing, logs);
 }
 
-// Read-only: unlike the old JSON store, checking cooldown never creates or
-// modifies a user row.
+// Read-only: checking cooldown never creates or modifies a user row.
 function canLog(chatId, userId, cooldownMinutes = 10) {
   const row = getDb()
     .prepare("SELECT last_log_ts FROM users WHERE chat_id = ? AND user_id = ?")
@@ -280,39 +191,6 @@ function loadData() {
   return { groups };
 }
 
-// Deprecated: the JSON read-modify-write cycle is gone. Kept so old callers
-// don't crash; bulk-imports the shape instead of overwriting a file.
-function saveData(data) {
-  if (!data || typeof data !== "object") return;
-  const database = getDb();
-  const groups =
-    data.groups && typeof data.groups === "object" ? data.groups : {};
-  database.exec("BEGIN IMMEDIATE");
-  try {
-    for (const [chatId, group] of Object.entries(groups)) {
-      for (const [userId, user] of Object.entries(group.users || {})) {
-        database
-          .prepare(
-            `INSERT INTO users (chat_id, user_id, name, streak, shield, last_log_ts)
-             VALUES (?, ?, ?, ?, ?, ?)
-             ON CONFLICT(chat_id, user_id) DO UPDATE SET name = excluded.name, streak = excluded.streak, shield = excluded.shield, last_log_ts = excluded.last_log_ts`,
-          )
-          .run(
-            chatId,
-            userId,
-            user.name || "Hydrator",
-            user.streak || 0,
-            normalizeImportedShield(user || {}),
-            user.lastLogTimestamp || 0,
-          );
-      }
-    }
-    database.exec("COMMIT");
-  } catch {
-    database.exec("ROLLBACK");
-  }
-}
-
 function listChatIds() {
   const ids = new Set();
   for (const row of getDb().prepare("SELECT chat_id FROM users").all()) {
@@ -362,7 +240,6 @@ function resetDailyLogs() {
 
 module.exports = {
   loadData,
-  saveData,
   getUser,
   canLog,
   recordLog,

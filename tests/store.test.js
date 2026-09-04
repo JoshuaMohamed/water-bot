@@ -4,8 +4,6 @@ const os = require("os");
 const path = require("path");
 const fs = require("fs");
 
-process.env.WATER_SKIP_LEGACY_MIGRATION = "1";
-
 const tmpDb = path.join(
   os.tmpdir(),
   `water-store-test-${Date.now()}-${process.pid}.db`,
