@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const { config } = require("./config");
 
 const DB_FILE = path.join(__dirname, "data.json");
 
@@ -147,7 +148,7 @@ function resetDailyLogs() {
     for (const [id, user] of Object.entries(group.users)) {
       const normalizedUser = normalizeUser(user);
       const loggedCount = normalizedUser.logsToday.length;
-      const target = parseInt(process.env.DAILY_TARGET || "4");
+      const target = config.dailyTarget;
 
       if (loggedCount < target) {
         if (normalizedUser.shield > 0) {

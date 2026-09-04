@@ -1,5 +1,6 @@
 const cron = require("node-cron");
 const store = require("./store");
+const { config, isAdmin } = require("./config");
 const {
   formatAdminOverrideMessage,
   formatCooldownMessage,
@@ -7,6 +8,7 @@ const {
   formatLogSuccessMessage,
   formatNightlySummary,
   formatNoOverrideMessage,
+  formatNotAdminMessage,
   formatStandings,
 } = require("./content");
 const { inspectWaterPhoto } = require("./referee");
@@ -14,10 +16,11 @@ const { inspectWaterPhoto } = require("./referee");
 function getSenderInfo(msg) {
   const rawId = msg.author || msg.from || "";
   const cleanNumber = rawId.split(":")[0].split("@")[0];
+  const senderNumber = cleanNumber.replace(/\D/g, "");
   const userId = cleanNumber ? `${cleanNumber}@c.us` : rawId;
   const userName = msg._data?.notifyName || msg._data?.pushname || "Hydrator";
 
-  return { userId, userName };
+  return { userId, userName, senderNumber };
 }
 
 function getMessageText(msg) {
@@ -85,15 +88,15 @@ async function handleMessage(client, msg) {
   if (normalizedBody.includes("#water")) {
     const { userId, userName } = getSenderInfo(msg);
 
-    const cooldown = store.canLog(
-      chatId,
-      userId,
-      parseInt(process.env.COOLDOWN_MINUTES || "10"),
-    );
+    const cooldown = store.canLog(chatId, userId, config.cooldownMinutes);
 
     if (!cooldown.allowed) {
       await msg.reply(
-        formatCooldownMessage(userName, cooldown.remainingMinutes),
+        formatCooldownMessage(
+          userName,
+          cooldown.remainingMinutes,
+          config.cooldownMinutes,
+        ),
       );
       return;
     }
@@ -135,8 +138,16 @@ async function handleMessage(client, msg) {
   }
 
   if (body.trim() === "!override") {
+    const { senderNumber } = getSenderInfo(msg);
+    if (!isAdmin({ senderNumber, fromMe: Boolean(msg.fromMe) })) {
+      await msg.reply(formatNotAdminMessage());
+      return;
+    }
     const lastRejected = store.getLastRejected(chatId);
-    if (lastRejected && Date.now() - lastRejected.timestamp < 10 * 60 * 1000) {
+    if (
+      lastRejected &&
+      Date.now() - lastRejected.timestamp < config.overrideWindowMs
+    ) {
       const user = store.recordLog(
         chatId,
         lastRejected.userId,
@@ -205,7 +216,7 @@ function registerBot(client) {
   client.on("ready", () => {
     console.log("✅ Water Referee Bot is online and listening!");
 
-    cron.schedule("0 21 * * *", async () => {
+    cron.schedule(config.nightlyCron, async () => {
       const db = store.loadData();
       for (const group of Object.values(db.groups)) {
         const summaryMsg = formatNightlySummary(group.users);
@@ -213,7 +224,7 @@ function registerBot(client) {
       }
     });
 
-    cron.schedule("0 0 * * *", () => {
+    cron.schedule(config.resetCron, () => {
       store.resetDailyLogs();
     });
   });

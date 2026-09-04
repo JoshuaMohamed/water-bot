@@ -1,5 +1,7 @@
+const { config } = require("./config");
+
 function getTarget() {
-  return parseInt(process.env.DAILY_TARGET || "4");
+  return config.dailyTarget;
 }
 
 function buildVisionPrompt(userName, currentLogCount) {
@@ -20,8 +22,9 @@ function buildVisionPrompt(userName, currentLogCount) {
     `;
 }
 
-function formatCooldownMessage(userName, remainingMinutes) {
-  return `⏳ Easy there, ${userName}! Minimum 10-minute cooldown between logs. Try again in ${remainingMinutes} min.`;
+function formatCooldownMessage(userName, remainingMinutes, cooldownMinutes) {
+  const window = cooldownMinutes || config.cooldownMinutes;
+  return `⏳ Easy there, ${userName}! Minimum ${window}-minute cooldown between logs. Try again in ${remainingMinutes} min.`;
 }
 
 function formatLogSuccessMessage(reason, loggedCount) {
@@ -42,6 +45,10 @@ function formatAdminOverrideMessage(userName, loggedCount) {
 
 function formatNoOverrideMessage() {
   return "⚠️ No recently rejected photo found to override.";
+}
+
+function formatNotAdminMessage() {
+  return "⛔ Only admins can use !override.";
 }
 
 function formatStandings(dbUsers) {
@@ -81,5 +88,6 @@ module.exports = {
   formatLogSuccessMessage,
   formatNightlySummary,
   formatNoOverrideMessage,
+  formatNotAdminMessage,
   formatStandings,
 };
