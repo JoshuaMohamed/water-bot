@@ -7,10 +7,29 @@ function shouldLog(level) {
   return LEVELS[level] >= configured;
 }
 
+function formatValue(arg) {
+  if (typeof arg === "string") return arg;
+  if (arg instanceof Error) return arg.stack || arg.message || String(arg);
+  if (arg && typeof arg === "object" && "message" in arg && typeof arg.message === "string" && Object.keys(arg).length === 1) {
+    return arg.message;
+  }
+  try {
+    const seen = new Set();
+    return JSON.stringify(arg, (key, value) => {
+      if (value instanceof Error) return value.stack || value.message;
+      if (typeof value === "object" && value !== null) {
+        if (seen.has(value)) return "[Circular]";
+        seen.add(value);
+      }
+      return value;
+    });
+  } catch {
+    return String(arg);
+  }
+}
+
 function formatArgs(args) {
-  return args.map((arg) =>
-    typeof arg === "string" ? arg : JSON.stringify(arg),
-  );
+  return args.map((arg) => formatValue(arg));
 }
 
 function debug(...args) {

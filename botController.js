@@ -57,7 +57,7 @@ async function downloadFromMessage(mediaMsg) {
     } catch (error) {
       logger.warn(
         `downloadMedia attempt ${attempt} failed:`,
-        error.message || error,
+        error?.stack || error?.message || error,
       );
     }
     if (attempt < 2) await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -94,7 +94,7 @@ async function getImageData(msg) {
     } catch (error) {
       logger.warn(
         "getQuotedMessage failed:",
-        error.message || error,
+        error?.stack || error?.message || error,
       );
     }
   }
@@ -178,7 +178,14 @@ async function handleMessage(client, msg) {
       }
     } catch (error) {
       logger.error("Error processing image:", error);
-      await botReply(msg, "❌ Failed to process photo. Please try again!");
+      try {
+        await botReply(msg, "❌ Failed to process photo. Please try again!");
+      } catch (replyError) {
+        logger.error(
+          "Failed to send error reply:",
+          replyError?.stack || replyError?.message || replyError,
+        );
+      }
     }
   }
 
@@ -257,8 +264,16 @@ function markMessageSeen(id) {
 // subsequent `message_create` event for our own reply is deduped instead of
 // re-entering handleMessage (self-trigger loop protection). This preserves
 // same-account owner commands because only IDs we just sent are ignored.
+// Belt-and-braces: scrub "#water" (substring trigger) from everything we
+// send, so even a Gemini-written reason containing "#water" can never make
+// our own reply look like a new #water command. ("!override"/"!standings"
+// need an exact match so they are safe to include in help text.)
 async function botReply(msg, content) {
-  const sent = await msg.reply(content);
+  const safeContent =
+    typeof content === "string"
+      ? content.replace(/#water/gi, "water")
+      : content;
+  const sent = await msg.reply(safeContent);
   markMessageSeen(getMessageId(sent));
   return sent;
 }
@@ -293,7 +308,7 @@ function registerBot(client) {
         } catch (error) {
           logger.error(
             "nightly summary send failed:",
-            error.message || error,
+            error?.stack || error?.message || error,
           );
         }
       }

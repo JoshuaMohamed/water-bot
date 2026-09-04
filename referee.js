@@ -66,7 +66,7 @@ async function inspectWaterPhoto(
       )
     );
   } catch (error) {
-    logger.error("Gemini Vision API Error:", error.message || error);
+    logger.error("Gemini Vision API Error:", error?.stack || error?.message || error);
     // Fail closed: never auto-grant points when verification is unavailable.
     return rejectedResult(
       `Couldn't verify that photo right now, ${userName} — please try again in a bit.`,
