@@ -29,10 +29,6 @@ function cleanupStaleAuth(targetDir) {
     return;
   }
 
-  console.log(
-    "Removing stale WhatsApp lock files before startup (keeping auth session intact)...",
-  );
-
   for (const file of staleSessionFiles) {
     fs.rmSync(path.join(sessionDir, file), { force: true });
   }
@@ -68,16 +64,8 @@ function createClient() {
     console.error("[water-bot] WhatsApp auth failure:", message);
   });
 
-  client.on("change_state", (state) => {
-    console.log("[water-bot] WhatsApp state changed:", state);
-  });
-
   client.on("disconnected", (reason) => {
     console.log("[water-bot] WhatsApp disconnected:", reason);
-  });
-
-  client.on("loading_screen", (percent, message) => {
-    console.log("[water-bot] WhatsApp loading:", { percent, message });
   });
 
   registerBot(client);

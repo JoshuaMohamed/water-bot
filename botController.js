@@ -31,52 +31,26 @@ function isRelevantMessage(msg) {
   );
 }
 
-function getMessageTrace(msg) {
-  const body = getMessageText(msg);
-  return {
-    id: msg.id?._serialized || msg.id || null,
-    from: msg.from || null,
-    author: msg.author || null,
-    hasMedia: Boolean(msg.hasMedia),
-    bodyPreview: body.slice(0, 120),
-    fromMe: Boolean(msg.fromMe),
-  };
-}
-
 async function getImageData(client, msg) {
   if (typeof msg.downloadMedia === "function") {
     try {
       const downloaded = await msg.downloadMedia();
       if (downloaded?.data) {
-        console.log("[water-bot] getImageData: using downloadMedia payload", {
-          mimetype: downloaded.mimetype || "image/jpeg",
-          dataLength: downloaded.data.length,
-        });
-
         return {
           buffer: Buffer.from(downloaded.data, "base64"),
           mimetype: downloaded.mimetype || "image/jpeg",
         };
       }
-    } catch (error) {
-      console.error("[water-bot] downloadMedia failed:", error.message);
+    } catch {
+      // Fall through to alternate extraction methods.
     }
   }
 
   const rawBody = msg._data?.body || msg._data?.preview;
-  console.log("[water-bot] getImageData: checking payload", {
-    msgId: msg.id?._serialized || msg.id,
-    hasMedia: msg.hasMedia,
-    hasRawBody: Boolean(rawBody),
-    rawBodyLength: typeof rawBody === "string" ? rawBody.length : 0,
-    mimetype: msg._data?.mimetype || "image/jpeg",
-    from: msg.from,
-  });
 
   if (rawBody && typeof rawBody === "string") {
     const base64Data = rawBody.includes(",") ? rawBody.split(",")[1] : rawBody;
     if (base64Data && base64Data.length > 100) {
-      console.log("[water-bot] getImageData: using raw media body payload");
       return {
         buffer: Buffer.from(base64Data, "base64"),
         mimetype: msg._data?.mimetype || "image/jpeg",
@@ -106,18 +80,13 @@ async function getImageData(client, msg) {
     }, serializedId);
 
     if (base64) {
-      console.log("[water-bot] getImageData: extracted media from DOM", {
-        base64Length: base64.length,
-      });
       return {
         buffer: Buffer.from(base64, "base64"),
         mimetype: "image/jpeg",
       };
     }
-
-    console.log("[water-bot] getImageData: no image data found in DOM");
-  } catch (error) {
-    console.error("[water-bot] DOM image extraction failed:", error.message);
+  } catch {
+    // DOM extraction unavailable; treat as no image data.
   }
 
   return null;
@@ -156,24 +125,11 @@ async function handleMessage(client, msg) {
   const chatInfo = await getChatContext(msg);
   const chatId = chatInfo.chatId || msg.to || msg.chatId || msg.from;
 
-  console.log("[water-bot] message received", {
-    from: msg.from,
-    chatId,
-    hasMedia: Boolean(msg.hasMedia),
-    bodyPreview: body.slice(0, 120),
-    isGroup: chatInfo.isGroup,
-    chatName: chatInfo.chatName,
-  });
-
   if (!isRelevantMessage(msg)) {
-    console.log(
-      "[water-bot] ignoring message: no #water trigger or admin command",
-    );
     return;
   }
 
   if (normalizedBody.includes("#water")) {
-    console.log("[water-bot] #water media trigger detected");
     const { userId, userName } = getSenderInfo(msg);
 
     const cooldown = store.canLog(
@@ -181,11 +137,6 @@ async function handleMessage(client, msg) {
       userId,
       parseInt(process.env.COOLDOWN_MINUTES || "10"),
     );
-    console.log("[water-bot] cooldown check", {
-      userId,
-      allowed: cooldown.allowed,
-      remainingMinutes: cooldown.remainingMinutes,
-    });
 
     if (!cooldown.allowed) {
       await msg.reply(
@@ -196,11 +147,6 @@ async function handleMessage(client, msg) {
 
     try {
       const imageData = await getImageData(client, msg);
-      console.log("[water-bot] imageData result", {
-        hasImageData: Boolean(imageData),
-        mimetype: imageData?.mimetype,
-        size: imageData?.buffer?.length || 0,
-      });
 
       if (!imageData) {
         await msg.reply(
@@ -216,8 +162,6 @@ async function handleMessage(client, msg) {
         userName,
         user.logsToday.length,
       );
-
-      console.log("[water-bot] model evaluation", evaluation);
 
       if (evaluation.isValid) {
         const updatedUser = store.recordLog(chatId, userId, userName);
@@ -264,24 +208,16 @@ async function handleMessage(client, msg) {
 }
 
 function attachMessageListeners(client) {
-  const seenMessages = new Set();
-
-  const traceAndHandle = async (eventName, msg) => {
-    const trace = getMessageTrace(msg);
-    if (!seenMessages.has(trace.id)) {
-      seenMessages.add(trace.id);
-      console.log(`[water-bot] ${eventName}`, trace);
-    }
-
+  const handleWithErrorLog = async (msg) => {
     try {
       await handleMessage(client, msg);
     } catch (error) {
-      console.error(`[water-bot] ${eventName} handler error:`, error);
+      console.error("[water-bot] message handler error:", error);
     }
   };
 
-  client.on("message_create", (msg) => traceAndHandle("message_create", msg));
-  client.on("message", (msg) => traceAndHandle("message", msg));
+  client.on("message_create", handleWithErrorLog);
+  client.on("message", handleWithErrorLog);
 }
 
 function registerBot(client) {
@@ -289,7 +225,6 @@ function registerBot(client) {
     console.log("✅ Water Referee Bot is online and listening!");
 
     cron.schedule("0 21 * * *", async () => {
-      console.log("Running 9:00 PM Nightly Summary...");
       const db = store.loadData();
       for (const group of Object.values(db.groups)) {
         const summaryMsg = formatNightlySummary(group.users);
@@ -298,7 +233,6 @@ function registerBot(client) {
     });
 
     cron.schedule("0 0 * * *", () => {
-      console.log("Resetting daily logs & updating streaks/shields...");
       store.resetDailyLogs();
     });
   });
