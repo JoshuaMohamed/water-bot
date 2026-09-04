@@ -114,8 +114,10 @@ async function getChatId(msg) {
 
 async function handleMessage(client, msg) {
   // Same-account bot: the owner sends commands from the logged-in account
-  // itself (fromMe). Never block those — bot replies carry no command
-  // triggers, so the relevance filter below already prevents self-loops.
+  // itself (fromMe), so we can't blanket-ignore fromMe messages.
+  // Instead, bot replies must never contain command triggers (like #water),
+  // and every bot reply ID is marked seen so message_create for our own
+  // outgoing messages is deduped before it can re-trigger.
 
   const body = getMessageText(msg);
   const normalizedBody = body.toLowerCase();
@@ -131,7 +133,8 @@ async function handleMessage(client, msg) {
     const cooldown = store.canLog(chatId, userId, config.cooldownMinutes);
 
     if (!cooldown.allowed) {
-      await msg.reply(
+      await botReply(
+        msg,
         formatCooldownMessage(
           userName,
           cooldown.remainingMinutes,
@@ -145,8 +148,9 @@ async function handleMessage(client, msg) {
       const imageData = await getImageData(msg);
 
       if (!imageData) {
-        await msg.reply(
-          "❌ Couldn't grab that photo. Send the photo WITH #water in the caption, or reply to the photo with #water!",
+        await botReply(
+          msg,
+          "❌ Couldn't grab that photo. Send the photo WITH the water hashtag in the caption, or reply to the photo with the water hashtag!",
         );
         return;
       }
@@ -161,7 +165,8 @@ async function handleMessage(client, msg) {
 
       if (evaluation.isValid) {
         const updatedUser = store.recordLog(chatId, userId, userName);
-        await msg.reply(
+        await botReply(
+          msg,
           formatLogSuccessMessage(
             evaluation.reason,
             updatedUser.logsToday.length,
@@ -169,18 +174,18 @@ async function handleMessage(client, msg) {
         );
       } else {
         store.setLastRejected(chatId, userId, userName);
-        await msg.reply(formatLogRejectedMessage(evaluation.reason));
+        await botReply(msg, formatLogRejectedMessage(evaluation.reason));
       }
     } catch (error) {
       logger.error("Error processing image:", error);
-      await msg.reply("❌ Failed to process photo. Please try again!");
+      await botReply(msg, "❌ Failed to process photo. Please try again!");
     }
   }
 
   if (body.trim() === "!override") {
     const { senderNumber } = getSenderInfo(msg);
     if (!isAdmin({ senderNumber, fromMe: Boolean(msg.fromMe) })) {
-      await msg.reply(formatNotAdminMessage());
+      await botReply(msg, formatNotAdminMessage());
       return;
     }
     const lastRejected = store.getLastRejected(chatId);
@@ -193,21 +198,22 @@ async function handleMessage(client, msg) {
         lastRejected.userId,
         lastRejected.userName,
       );
-      await msg.reply(
+      await botReply(
+        msg,
         formatAdminOverrideMessage(
           lastRejected.userName,
           user.logsToday.length,
         ),
       );
     } else {
-      await msg.reply(formatNoOverrideMessage());
+      await botReply(msg, formatNoOverrideMessage());
     }
   }
 
   if (body.trim() === "!standings") {
     const db = store.loadData();
     const groupUsers = db.groups[chatId]?.users || {};
-    await msg.reply(formatStandings(groupUsers));
+    await botReply(msg, formatStandings(groupUsers));
   }
 }
 
@@ -238,6 +244,25 @@ function isDuplicateMessage(id) {
   return false;
 }
 
+function markMessageSeen(id) {
+  if (!id) return;
+  seenMessageIds.set(id, Date.now());
+  if (seenMessageIds.size > SEEN_MAX_IDS) {
+    const oldest = seenMessageIds.keys().next().value;
+    seenMessageIds.delete(oldest);
+  }
+}
+
+// Reply via msg.reply, then mark the outgoing message ID as seen so the
+// subsequent `message_create` event for our own reply is deduped instead of
+// re-entering handleMessage (self-trigger loop protection). This preserves
+// same-account owner commands because only IDs we just sent are ignored.
+async function botReply(msg, content) {
+  const sent = await msg.reply(content);
+  markMessageSeen(getMessageId(sent));
+  return sent;
+}
+
 function attachMessageListeners(client) {
   const dedupAndHandle = async (msg) => {
     if (isDuplicateMessage(getMessageId(msg))) return;
@@ -260,10 +285,11 @@ function registerBot(client) {
       const db = store.loadData();
       for (const [chatId, group] of Object.entries(db.groups)) {
         try {
-          await client.sendMessage(
+          const sent = await client.sendMessage(
             chatId,
             formatNightlySummary(group.users),
           );
+          markMessageSeen(getMessageId(sent));
         } catch (error) {
           logger.error(
             "nightly summary send failed:",
